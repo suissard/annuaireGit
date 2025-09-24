@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Liste des Dépôts GitHub</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Custom scrollbar for better aesthetics */
+        #repo-grid::-webkit-scrollbar {
+            width: 8px;
+        }
+        #repo-grid::-webkit-scrollbar-track {
+            background: #2d3748;
+        }
+        #repo-grid::-webkit-scrollbar-thumb {
+            background-color: #4a5568;
+            border-radius: 10px;
+            border: 2px solid #2d3748;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white flex items-center justify-center min-h-screen p-4">
+
+    <div class="w-full max-w-4xl bg-gray-800 rounded-xl shadow-2xl p-6 md:p-8 border border-gray-700">
+        
+        <!-- Header -->
+        <div class="flex items-center mb-6">
+            <i class="fab fa-github fa-3x text-white"></i>
+            <div class="ml-4">
+                <h1 class="text-2xl font-bold text-white">Explorateur de Pages GitHub</h1>
+                <p class="text-gray-400">Trouvez les sites déployés d'un utilisateur GitHub.</p>
+            </div>
+        </div>
+
+        <!-- Input Form -->
+        <div class="flex flex-col sm:flex-row gap-3 mb-4">
+            <input type="text" id="username-input" placeholder="Ex: suissard, octocat..." value="suissard" class="flex-grow bg-gray-700 border border-gray-600 text-white rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 p-3 outline-none transition duration-300">
+            <button id="fetch-button" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-6 rounded-lg transition duration-300 flex items-center justify-center shadow-lg">
+                <i class="fas fa-search mr-2"></i>
+                <span>Rechercher</span>
+            </button>
+        </div>
+
+        <!-- Results Area -->
+        <div id="results-container" class="mt-6">
+            <!-- Loading Spinner -->
+            <div id="loader" class="text-center hidden">
+                <i class="fas fa-spinner fa-spin fa-2x text-indigo-400"></i>
+                <p class="mt-2 text-gray-400">Chargement...</p>
+            </div>
+            <!-- Error Message -->
+            <div id="error-message" class="text-center text-red-400 p-4 bg-red-900/50 rounded-lg hidden"></div>
+            <!-- Repository List -->
+            <div id="repo-header" class="hidden text-gray-300 mb-2 px-2 font-semibold">
+                <span id="repo-count">0</span> <span id="repo-header-text">dépôt(s) trouvé(s) :</span>
+            </div>
+            <div id="repo-grid" class="max-h-96 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-4 pr-2">
+                <!-- Les dépôts seront injectés ici par JavaScript -->
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const usernameInput = document.getElementById('username-input');
+        const fetchButton = document.getElementById('fetch-button');
+        const repoGrid = document.getElementById('repo-grid');
+        const loader = document.getElementById('loader');
+        const errorMessage = document.getElementById('error-message');
+        const repoHeader = document.getElementById('repo-header');
+        const repoCount = document.getElementById('repo-count');
+        const repoHeaderText = document.getElementById('repo-header-text');
+
+        const GITHUB_API_URL = 'https://api.github.com/users/';
+
+        // --- Core function to fetch all repositories ---
+        async function fetchAllRepos(username) {
+            let repos = [];
+            let page = 1;
+            const perPage = 100; // Max per page
+            let keepFetching = true;
+
+            while (keepFetching) {
+                try {
+                    const response = await fetch(`${GITHUB_API_URL}${username}/repos?per_page=${perPage}&page=${page}`);
+                    
+                    if (response.status === 404) {
+                        throw new Error("Utilisateur introuvable. Veuillez vérifier le nom d'utilisateur.");
+                    }
+                    if (!response.ok) {
+                        const rateLimitData = await response.json();
+                        const message = rateLimitData.message || "Une erreur est survenue lors de la récupération des données.";
+                        throw new Error(message);
+                    }
+
+                    const pageRepos = await response.json();
+                    
+                    if (pageRepos.length === 0) {
+                        keepFetching = false;
+                    } else {
+                        repos = repos.concat(pageRepos);
+                        page++;
+                    }
+                } catch (error) {
+                    displayError(error.message);
+                    keepFetching = false;
+                    return null; // Return null on error
+                }
+            }
+            return repos;
+        }
+
+        // --- UI update functions ---
+        function displayRepos(repos) {
+            repoGrid.innerHTML = ''; // Clear previous grid
+
+            // 1. Filter for repos with a deployed page
+            const deployedRepos = repos.filter(repo => repo.has_pages || repo.homepage);
+            
+            // 2. Sort the filtered repos alphabetically
+            deployedRepos.sort((a, b) => a.name.localeCompare(b.name));
+
+            // 3. Update header and count
+            repoHeader.classList.remove('hidden');
+            repoCount.textContent = deployedRepos.length;
+
+            if (deployedRepos.length === 0) {
+                repoHeaderText.textContent = "dépôt avec page déployée trouvé :";
+                repoGrid.innerHTML = `<p class="text-center text-gray-500 p-4 col-span-full">Cet utilisateur n'a aucun dépôt avec une page GitHub Pages active.</p>`;
+                return;
+            }
+            
+            repoHeaderText.textContent = `dépôt(s) avec page déployée trouvé(s) :`;
+
+            // 4. Create and append grid items
+            deployedRepos.forEach(repo => {
+                const card = document.createElement('div');
+                const description = repo.description ? repo.description : '<i class="text-gray-500">Aucune description fournie.</i>';
+
+                const mainLinkUrl = repo.homepage || `https://${repo.owner.login}.github.io/${repo.name}/`;
+                const iconClass = 'fa-rocket';
+
+                card.className = 'bg-gray-700/40 p-4 rounded-lg hover:bg-gray-700/60 transition-all duration-200 cursor-pointer flex flex-col justify-between h-full hover:shadow-indigo-500/20 hover:shadow-lg';
+                card.innerHTML = `
+                    <div class="flex flex-col flex-grow">
+                        <div class="flex items-center overflow-hidden mb-2">
+                            <i class="fas ${iconClass} text-indigo-400 text-lg"></i>
+                            <span class="ml-3 font-semibold truncate" title="${repo.name}">${repo.name}</span>
+                        </div>
+                        <p class="text-sm text-gray-400 flex-grow">${description}</p>
+                    </div>
+                    <div class="mt-4">
+                         <a href="${repo.html_url}" target="_blank" rel="noopener noreferrer" class="source-code-link inline-flex items-center text-xs bg-gray-500/10 hover:bg-gray-500/20 text-gray-300 font-semibold py-1 px-3 rounded-full transition-colors duration-200">
+                            <i class="fab fa-github mr-2"></i>
+                            Code Source
+                        </a>
+                    </div>
+                `;
+                
+                card.addEventListener('click', () => {
+                    window.open(mainLinkUrl, '_blank', 'noopener,noreferrer');
+                });
+
+                const sourceCodeLink = card.querySelector('.source-code-link');
+                sourceCodeLink.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                });
+
+                repoGrid.appendChild(card);
+            });
+        }
+        
+        function displayError(message) {
+            errorMessage.textContent = message;
+            errorMessage.classList.remove('hidden');
+        }
+
+        function clearResults() {
+            repoGrid.innerHTML = '';
+            errorMessage.classList.add('hidden');
+            repoHeader.classList.add('hidden');
+        }
+
+        // --- Main handler ---
+        async function handleFetch() {
+            const username = usernameInput.value.trim();
+            if (!username) {
+                displayError("Veuillez entrer un nom d'utilisateur.");
+                return;
+            }
+
+            clearResults();
+            loader.classList.remove('hidden');
+
+            const repos = await fetchAllRepos(username);
+
+            loader.classList.add('hidden');
+            if (repos) {
+                displayRepos(repos);
+            }
+        }
+        
+        // --- Event Listeners ---
+        fetchButton.addEventListener('click', handleFetch);
+        usernameInput.addEventListener('keyup', (event) => {
+            if (event.key === 'Enter') {
+                handleFetch();
+            }
+        });
+
+        // --- Initialize with default user on page load ---
+        window.addEventListener('DOMContentLoaded', handleFetch);
+
+    </script>
+</body>
+</html>
+
